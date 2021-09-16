@@ -1,3 +1,4 @@
+const regeneratorRuntime = require("regenerator-runtime");
 const htmlparser = require('htmlparser2');
 const escapeStringRegexp = require('escape-string-regexp');
 const { klona } = require('klona');
