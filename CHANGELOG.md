@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.7.0 (2022-02-04)
+
+- Allows a more sensible set of default attributes on `<img />` tags. Thanks to [Zade Viggers](https://github.com/zadeviggers).
+
+## 2.6.1 (2021-12-08)
+
+- Fixes style filtering to retain `!important` when used.
+- Fixed trailing text bug on `transformTags` options that was reported on [issue #506](https://github.com/apostrophecms/sanitize-html/issues/506). Thanks to [Alex Rantos](https://github.com/alex-rantos).
+
+## 2.6.0 (2021-11-23)
+
+- Support for regular expressions in the `allowedClasses` option. Thanks to [Alex Rantos](https://github.com/alex-rantos).
+
+## 2.5.3 (2021-11-02):
+
+- Fixed bug introduced by klona 2.0.5, by removing klona entirely.
+
+## 2.5.2 (2021-10-13):
+
+- Nullish HTML input now returns an empty string. Nullish value may be explicit `null`, `undefined` or implicit `undefined` when value is not provided. Thanks to Artem Kostiuk for the contribution.
+- Documented that all text content is escaped. Thanks to Siddharth Singh.
+
 ## 2.5.1 (2021-09-14):
 - The `allowedScriptHostnames` and `allowedScriptDomains` options now implicitly purge the inline content of all script tags, not just those with `src` attributes. This behavior was already strongly implied by the fact that they purged it in the case where a `src` attribute was actually present, and is necessary for the feature to provide any real security. Thanks to Grigorii Duca for pointing out the issue.
 

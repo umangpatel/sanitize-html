@@ -21,6 +21,7 @@ The syntax of poorly closed `p` and `img` elements is cleaned up.
 Allowing particular urls as a `src` to an iframe tag by filtering hostnames is also supported.
 
 HTML comments are not preserved.
+Additionally, `sanitize-html` escapes _ALL_ text content - this means that ampersands, greater-than, and less-than signs are converted to their equivalent HTML character references (`&` --> `&amp;`, `<` --> `&lt;`, and so on). Additionally, in attribute values, quotation marks are escaped as well (`"` --> `&quot;`).
 
 ## Requirements
 
@@ -127,10 +128,9 @@ allowedTags: [
 disallowedTagsMode: 'discard',
 allowedAttributes: {
   a: [ 'href', 'name', 'target' ],
-  // We don't currently allow img itself by default, but this
-  // would make sense if we did. You could add srcset here,
-  // and if you do the URL is checked for safety
-  img: [ 'src' ]
+  // We don't currently allow img itself by default, but
+  // these attributes would make sense if we did.
+  img: [ 'src', 'srcset', 'alt', 'title', 'width', 'height', 'loading' ]
 },
 // Lots of these won't come up by default because we don't allow them
 selfClosing: [ 'img', 'br', 'hr', 'area', 'base', 'basefont', 'input', 'link', 'meta' ],
@@ -238,12 +238,23 @@ const clean = sanitizeHtml(dirty, {
 ```
 
 Similar to `allowedAttributes`, you can use `*` to allow classes with a certain prefix, or use `*` as a tag name to allow listed classes to be valid for any tag:
+
 ```js
 allowedClasses: {
   'code': [ 'language-*', 'lang-*' ],
   '*': [ 'fancy', 'simple' ]
 }
 ```
+
+Furthermore, regular expressions are supported too:
+
+```js
+allowedClasses: {
+  p: [ /^regex\d{2}$/ ]
+}
+```
+
+> Note: It is advised that your regular expressions always begin with `^` so that you are requiring a known prefix. A regular expression with neither `^` nor `$` just requires that something appear in the middle.
 
 ### Allowed CSS Styles
 

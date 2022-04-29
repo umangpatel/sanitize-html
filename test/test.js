@@ -43,6 +43,18 @@ describe('sanitizeHtml', function() {
   it('should respect text nodes at top level', function() {
     assert.equal(sanitizeHtml('Blah blah blah<p>Whee!</p>'), 'Blah blah blah<p>Whee!</p>');
   });
+  it('should return an empty string when input is explicit "undefined"', function() {
+    assert.equal(sanitizeHtml(undefined), '');
+  });
+  it('should return an empty string when input is explicit "null"', function() {
+    assert.equal(sanitizeHtml(null), '');
+  });
+  it('should return an empty string when input is not provided', function() {
+    assert.equal(sanitizeHtml(), '');
+  });
+  it('should return an empty string when input is an empty string', function() {
+    assert.equal(sanitizeHtml(''), '');
+  });
   it('should reject markup not allowlisted without destroying its text', function() {
     assert.equal(sanitizeHtml('<div><wiggly>Hello</wiggly></div>'), '<div>Hello</div>');
   });
@@ -214,6 +226,19 @@ describe('sanitizeHtml', function() {
         }
       }
     }), '<a href="http://somelink">some good text</a>');
+  });
+
+  it('should preserve trailing text when replacing the tagName and adding new text via transforming function', function () {
+    assert.equal(sanitizeHtml('<p>text before <br> text after</p>', {
+      transformTags: {
+        br: function (_tagName, _attribs) {
+          return {
+            tagName: 'span',
+            text: ' '
+          };
+        }
+      }
+    }), '<p>text before <span> </span> text after</p>');
   });
 
   it('should add new text when not initially set and replace attributes when they are changed by transforming function', function () {
@@ -411,6 +436,20 @@ describe('sanitizeHtml', function() {
         }
       ),
       '<p class="nifty simple dippy">whee</p>'
+    );
+  });
+  it('should allow only classes that matches `allowedClasses` regex', function() {
+    assert.equal(
+      sanitizeHtml(
+        '<p class="nifty33 nifty2 dippy">whee</p>',
+        {
+          allowedTags: [ 'p' ],
+          allowedClasses: {
+            p: [ /^nifty\d{2}$/, /^d\w{4}$/ ]
+          }
+        }
+      ),
+      '<p class="nifty33 dippy">whee</p>'
     );
   });
   it('should allow defining schemes on a per-tag basis', function() {
@@ -871,6 +910,21 @@ describe('sanitizeHtml', function() {
           }
         }
       }), '<span style="color:blue"></span>'
+    );
+  });
+  it('Should support !important styles', function() {
+    assert.equal(
+      sanitizeHtml('<span style=\'color: blue !important\'></span>', {
+        allowedTags: false,
+        allowedAttributes: {
+          span: [ 'style' ]
+        },
+        allowedStyles: {
+          span: {
+            color: [ /blue/ ]
+          }
+        }
+      }), '<span style="color:blue !important"></span>'
     );
   });
   it('Should allow a specific style from global', function() {

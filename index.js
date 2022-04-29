@@ -1,7 +1,6 @@
 const regeneratorRuntime = require("regenerator-runtime");
 const htmlparser = require('htmlparser2');
 const escapeStringRegexp = require('escape-string-regexp');
-const { klona } = require('klona');
 const { isPlainObject } = require('is-plain-object');
 const deepmerge = require('deepmerge');
 const parseSrcset = require('parse-srcset');
@@ -82,6 +81,10 @@ const VALID_HTML_ATTRIBUTE_NAME = /^[^\0\t\n\f\r /<=>]+$/;
 // https://github.com/fb55/htmlparser2/issues/105
 
 function sanitizeHtml(html, options, _recursing) {
+  if (html == null) {
+    return '';
+  }
+
   let result = '';
   // Used for hot swapping the result variable with an empty string in order to "capture" the text written to it.
   let tempResult = '';
@@ -154,6 +157,7 @@ function sanitizeHtml(html, options, _recursing) {
   }
   const allowedClassesMap = {};
   const allowedClassesGlobMap = {};
+  const allowedClassesRegexMap = {};
   each(options.allowedClasses, function(classes, tag) {
     // Implicitly allows the class attribute
     if (allowedAttributesMap) {
@@ -164,10 +168,13 @@ function sanitizeHtml(html, options, _recursing) {
     }
 
     allowedClassesMap[tag] = [];
+    allowedClassesRegexMap[tag] = [];
     const globRegex = [];
     classes.forEach(function(obj) {
       if (typeof obj === 'string' && obj.indexOf('*') >= 0) {
         globRegex.push(escapeStringRegexp(obj).replace(/\\\*/g, '.*'));
+      } else if (obj instanceof RegExp) {
+        allowedClassesRegexMap[tag].push(obj);
       } else {
         allowedClassesMap[tag].push(obj);
       }
@@ -429,12 +436,16 @@ function sanitizeHtml(html, options, _recursing) {
               const allowedSpecificClasses = allowedClassesMap[name];
               const allowedWildcardClasses = allowedClassesMap['*'];
               const allowedSpecificClassesGlob = allowedClassesGlobMap[name];
+              const allowedSpecificClassesRegex = allowedClassesRegexMap[name];
               const allowedWildcardClassesGlob = allowedClassesGlobMap['*'];
-              const allowedClassesGlobs = [ allowedSpecificClassesGlob, allowedWildcardClassesGlob ].filter(
-                function(t) {
+              const allowedClassesGlobs = [
+                allowedSpecificClassesGlob,
+                allowedWildcardClassesGlob
+              ]
+                .concat(allowedSpecificClassesRegex)
+                .filter(function (t) {
                   return t;
-                }
-              );
+                });
               if (allowedSpecificClasses && allowedWildcardClasses) {
                 value = filterClasses(value, deepmerge(allowedSpecificClasses, allowedWildcardClasses), allowedClassesGlobs);
               } else {
@@ -572,6 +583,7 @@ function sanitizeHtml(html, options, _recursing) {
         result = tempResult + escapeHtml(result);
         tempResult = '';
       }
+      addedText = false;
     }
   }, options.parser);
   parser.write(html);
@@ -647,18 +659,18 @@ function sanitizeHtml(html, options, _recursing) {
 
   /**
    * Filters user input css properties by allowlisted regex attributes.
+   * Modifies the abstractSyntaxTree object.
    *
    * @param {object} abstractSyntaxTree  - Object representation of CSS attributes.
    * @property {array[Declaration]} abstractSyntaxTree.nodes[0] - Each object cointains prop and value key, i.e { prop: 'color', value: 'red' }.
    * @param {object} allowedStyles       - Keys are properties (i.e color), value is list of permitted regex rules (i.e /green/i).
-   * @return {object}                    - Abstract Syntax Tree with filtered style attributes.
+   * @return {object}                    - The modified tree.
    */
   function filterCss(abstractSyntaxTree, allowedStyles) {
     if (!allowedStyles) {
       return abstractSyntaxTree;
     }
 
-    const filteredAST = klona(abstractSyntaxTree);
     const astRules = abstractSyntaxTree.nodes[0];
     let selectedRule;
 
@@ -673,24 +685,24 @@ function sanitizeHtml(html, options, _recursing) {
     }
 
     if (selectedRule) {
-      filteredAST.nodes[0].nodes = astRules.nodes.reduce(filterDeclarations(selectedRule), []);
+      abstractSyntaxTree.nodes[0].nodes = astRules.nodes.reduce(filterDeclarations(selectedRule), []);
     }
 
-    return filteredAST;
+    return abstractSyntaxTree;
   }
 
   /**
-   * Extracts the style attribues from an AbstractSyntaxTree and formats those
+   * Extracts the style attributes from an AbstractSyntaxTree and formats those
    * values in the inline style attribute format.
    *
    * @param  {AbstractSyntaxTree} filteredAST
-   * @return {string}             - Example: "color:yellow;text-align:center;font-family:helvetica;"
+   * @return {string}             - Example: "color:yellow;text-align:center !important;font-family:helvetica;"
    */
   function stringifyStyleAttributes(filteredAST) {
     return filteredAST.nodes[0].nodes
-      .reduce(function(extractedAttributes, attributeObject) {
+      .reduce(function(extractedAttributes, attrObject) {
         extractedAttributes.push(
-          attributeObject.prop + ':' + attributeObject.value
+          `${attrObject.prop}:${attrObject.value}${attrObject.important ? ' !important' : ''}`
         );
         return extractedAttributes;
       }, [])
@@ -769,10 +781,9 @@ sanitizeHtml.defaults = {
   disallowedTagsMode: 'discard',
   allowedAttributes: {
     a: [ 'href', 'name', 'target' ],
-    // We don't currently allow img itself by default, but this
-    // would make sense if we did. You could add srcset here,
-    // and if you do the URL is checked for safety
-    img: [ 'src' ]
+    // We don't currently allow img itself by default, but
+    // these attributes would make sense if we did.
+    img: [ 'src', 'srcset', 'alt', 'title', 'width', 'height', 'loading' ]
   },
   // Lots of these won't come up by default because we don't allow them
   selfClosing: [ 'img', 'br', 'hr', 'area', 'base', 'basefont', 'input', 'link', 'meta' ],
