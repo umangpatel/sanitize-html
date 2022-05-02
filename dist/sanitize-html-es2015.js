@@ -2,7 +2,6 @@
 const regeneratorRuntime = require("regenerator-runtime");
 const htmlparser = require('htmlparser2');
 const escapeStringRegexp = require('escape-string-regexp');
-const { klona } = require('klona');
 const { isPlainObject } = require('is-plain-object');
 const deepmerge = require('deepmerge');
 const parseSrcset = require('parse-srcset');
@@ -83,6 +82,10 @@ const VALID_HTML_ATTRIBUTE_NAME = /^[^\0\t\n\f\r /<=>]+$/;
 // https://github.com/fb55/htmlparser2/issues/105
 
 function sanitizeHtml(html, options, _recursing) {
+  if (html == null) {
+    return '';
+  }
+
   let result = '';
   // Used for hot swapping the result variable with an empty string in order to "capture" the text written to it.
   let tempResult = '';
@@ -155,6 +158,7 @@ function sanitizeHtml(html, options, _recursing) {
   }
   const allowedClassesMap = {};
   const allowedClassesGlobMap = {};
+  const allowedClassesRegexMap = {};
   each(options.allowedClasses, function(classes, tag) {
     // Implicitly allows the class attribute
     if (allowedAttributesMap) {
@@ -165,10 +169,13 @@ function sanitizeHtml(html, options, _recursing) {
     }
 
     allowedClassesMap[tag] = [];
+    allowedClassesRegexMap[tag] = [];
     const globRegex = [];
     classes.forEach(function(obj) {
       if (typeof obj === 'string' && obj.indexOf('*') >= 0) {
         globRegex.push(escapeStringRegexp(obj).replace(/\\\*/g, '.*'));
+      } else if (obj instanceof RegExp) {
+        allowedClassesRegexMap[tag].push(obj);
       } else {
         allowedClassesMap[tag].push(obj);
       }
@@ -430,12 +437,16 @@ function sanitizeHtml(html, options, _recursing) {
               const allowedSpecificClasses = allowedClassesMap[name];
               const allowedWildcardClasses = allowedClassesMap['*'];
               const allowedSpecificClassesGlob = allowedClassesGlobMap[name];
+              const allowedSpecificClassesRegex = allowedClassesRegexMap[name];
               const allowedWildcardClassesGlob = allowedClassesGlobMap['*'];
-              const allowedClassesGlobs = [ allowedSpecificClassesGlob, allowedWildcardClassesGlob ].filter(
-                function(t) {
+              const allowedClassesGlobs = [
+                allowedSpecificClassesGlob,
+                allowedWildcardClassesGlob
+              ]
+                .concat(allowedSpecificClassesRegex)
+                .filter(function (t) {
                   return t;
-                }
-              );
+                });
               if (allowedSpecificClasses && allowedWildcardClasses) {
                 value = filterClasses(value, deepmerge(allowedSpecificClasses, allowedWildcardClasses), allowedClassesGlobs);
               } else {
@@ -573,6 +584,7 @@ function sanitizeHtml(html, options, _recursing) {
         result = tempResult + escapeHtml(result);
         tempResult = '';
       }
+      addedText = false;
     }
   }, options.parser);
   parser.write(html);
@@ -648,18 +660,18 @@ function sanitizeHtml(html, options, _recursing) {
 
   /**
    * Filters user input css properties by allowlisted regex attributes.
+   * Modifies the abstractSyntaxTree object.
    *
    * @param {object} abstractSyntaxTree  - Object representation of CSS attributes.
    * @property {array[Declaration]} abstractSyntaxTree.nodes[0] - Each object cointains prop and value key, i.e { prop: 'color', value: 'red' }.
    * @param {object} allowedStyles       - Keys are properties (i.e color), value is list of permitted regex rules (i.e /green/i).
-   * @return {object}                    - Abstract Syntax Tree with filtered style attributes.
+   * @return {object}                    - The modified tree.
    */
   function filterCss(abstractSyntaxTree, allowedStyles) {
     if (!allowedStyles) {
       return abstractSyntaxTree;
     }
 
-    const filteredAST = klona(abstractSyntaxTree);
     const astRules = abstractSyntaxTree.nodes[0];
     let selectedRule;
 
@@ -674,24 +686,24 @@ function sanitizeHtml(html, options, _recursing) {
     }
 
     if (selectedRule) {
-      filteredAST.nodes[0].nodes = astRules.nodes.reduce(filterDeclarations(selectedRule), []);
+      abstractSyntaxTree.nodes[0].nodes = astRules.nodes.reduce(filterDeclarations(selectedRule), []);
     }
 
-    return filteredAST;
+    return abstractSyntaxTree;
   }
 
   /**
-   * Extracts the style attribues from an AbstractSyntaxTree and formats those
+   * Extracts the style attributes from an AbstractSyntaxTree and formats those
    * values in the inline style attribute format.
    *
    * @param  {AbstractSyntaxTree} filteredAST
-   * @return {string}             - Example: "color:yellow;text-align:center;font-family:helvetica;"
+   * @return {string}             - Example: "color:yellow;text-align:center !important;font-family:helvetica;"
    */
   function stringifyStyleAttributes(filteredAST) {
     return filteredAST.nodes[0].nodes
-      .reduce(function(extractedAttributes, attributeObject) {
+      .reduce(function(extractedAttributes, attrObject) {
         extractedAttributes.push(
-          attributeObject.prop + ':' + attributeObject.value
+          `${attrObject.prop}:${attrObject.value}${attrObject.important ? ' !important' : ''}`
         );
         return extractedAttributes;
       }, [])
@@ -770,10 +782,9 @@ sanitizeHtml.defaults = {
   disallowedTagsMode: 'discard',
   allowedAttributes: {
     a: [ 'href', 'name', 'target' ],
-    // We don't currently allow img itself by default, but this
-    // would make sense if we did. You could add srcset here,
-    // and if you do the URL is checked for safety
-    img: [ 'src' ]
+    // We don't currently allow img itself by default, but
+    // these attributes would make sense if we did.
+    img: [ 'src', 'srcset', 'alt', 'title', 'width', 'height', 'loading' ]
   },
   // Lots of these won't come up by default because we don't allow them
   selfClosing: [ 'img', 'br', 'hr', 'area', 'base', 'basefont', 'input', 'link', 'meta' ],
@@ -806,7 +817,7 @@ sanitizeHtml.simpleTransform = function(newTagName, newAttribs, merge) {
   };
 };
 
-},{"deepmerge":5,"escape-string-regexp":27,"htmlparser2":31,"is-plain-object":33,"klona":34,"parse-srcset":36,"postcss":51,"regenerator-runtime":64}],2:[function(require,module,exports){
+},{"deepmerge":5,"escape-string-regexp":27,"htmlparser2":31,"is-plain-object":33,"parse-srcset":35,"postcss":50,"regenerator-runtime":63}],2:[function(require,module,exports){
 'use strict'
 
 exports.byteLength = byteLength
@@ -6832,90 +6843,6 @@ function isPlainObject(o) {
 exports.isPlainObject = isPlainObject;
 
 },{}],34:[function(require,module,exports){
-function klona(x) {
-	if (typeof x !== 'object') return x;
-
-	var k, tmp, str=Object.prototype.toString.call(x);
-
-	if (str === '[object Object]') {
-		if (x.constructor !== Object && typeof x.constructor === 'function') {
-			tmp = new x.constructor();
-			for (k in x) {
-				if (tmp.hasOwnProperty(k) && tmp[k] !== x[k]) {
-					tmp[k] = klona(x[k]);
-				}
-			}
-		} else {
-			tmp = {}; // null
-			for (k in x) {
-				if (k === '__proto__') {
-					Object.defineProperty(tmp, k, {
-						value: klona(x[k]),
-						configurable: true,
-						enumerable: true,
-						writable: true,
-					});
-				} else {
-					tmp[k] = klona(x[k]);
-				}
-			}
-		}
-		return tmp;
-	}
-
-	if (str === '[object Array]') {
-		k = x.length;
-		for (tmp=Array(k); k--;) {
-			tmp[k] = klona(x[k]);
-		}
-		return tmp;
-	}
-
-	if (str === '[object Set]') {
-		tmp = new Set;
-		x.forEach(function (val) {
-			tmp.add(klona(val));
-		});
-		return tmp;
-	}
-
-	if (str === '[object Map]') {
-		tmp = new Map;
-		x.forEach(function (val, key) {
-			tmp.set(klona(key), klona(val));
-		});
-		return tmp;
-	}
-
-	if (str === '[object Date]') {
-		return new Date(+x);
-	}
-
-	if (str === '[object RegExp]') {
-		tmp = new RegExp(x.source, x.flags);
-		tmp.lastIndex = x.lastIndex;
-		return tmp;
-	}
-
-	if (str === '[object DataView]') {
-		return new x.constructor( klona(x.buffer) );
-	}
-
-	if (str === '[object ArrayBuffer]') {
-		return x.slice(0);
-	}
-
-	// ArrayBuffer.isView(x)
-	// ~> `new` bcuz `Buffer.slice` => ref
-	if (str.slice(-6) === 'Array]') {
-		return new x.constructor(x);
-	}
-
-	return x;
-}
-
-exports.klona = klona;
-},{}],35:[function(require,module,exports){
 // This alphabet uses `A-Za-z0-9_-` symbols. The genetic algorithm helped
 // optimize the gzip compression for this alphabet.
 let urlAlphabet =
@@ -6947,7 +6874,7 @@ let nanoid = (size = 21) => {
 
 module.exports = { nanoid, customAlphabet }
 
-},{}],36:[function(require,module,exports){
+},{}],35:[function(require,module,exports){
 /**
  * Srcset Parser
  *
@@ -7279,7 +7206,7 @@ module.exports = { nanoid, customAlphabet }
 	}
 }));
 
-},{}],37:[function(require,module,exports){
+},{}],36:[function(require,module,exports){
 'use strict'
 
 let Container = require('./container')
@@ -7306,7 +7233,7 @@ AtRule.default = AtRule
 
 Container.registerAtRule(AtRule)
 
-},{"./container":39}],38:[function(require,module,exports){
+},{"./container":38}],37:[function(require,module,exports){
 'use strict'
 
 let Node = require('./node')
@@ -7321,7 +7248,7 @@ class Comment extends Node {
 module.exports = Comment
 Comment.default = Comment
 
-},{"./node":48}],39:[function(require,module,exports){
+},{"./node":47}],38:[function(require,module,exports){
 'use strict'
 
 let { isClean, my } = require('./symbols')
@@ -7755,7 +7682,7 @@ Container.rebuild = node => {
   }
 }
 
-},{"./comment":38,"./declaration":41,"./node":48,"./symbols":59}],40:[function(require,module,exports){
+},{"./comment":37,"./declaration":40,"./node":47,"./symbols":58}],39:[function(require,module,exports){
 'use strict'
 
 let { red, bold, gray, options: colorette } = require('colorette')
@@ -7849,7 +7776,7 @@ class CssSyntaxError extends Error {
 module.exports = CssSyntaxError
 CssSyntaxError.default = CssSyntaxError
 
-},{"./terminal-highlight":3,"colorette":3}],41:[function(require,module,exports){
+},{"./terminal-highlight":3,"colorette":3}],40:[function(require,module,exports){
 'use strict'
 
 let Node = require('./node')
@@ -7875,7 +7802,7 @@ class Declaration extends Node {
 module.exports = Declaration
 Declaration.default = Declaration
 
-},{"./node":48}],42:[function(require,module,exports){
+},{"./node":47}],41:[function(require,module,exports){
 'use strict'
 
 let Container = require('./container')
@@ -7910,7 +7837,7 @@ Document.registerProcessor = dependant => {
 module.exports = Document
 Document.default = Document
 
-},{"./container":39}],43:[function(require,module,exports){
+},{"./container":38}],42:[function(require,module,exports){
 'use strict'
 
 let Declaration = require('./declaration')
@@ -7966,7 +7893,7 @@ function fromJSON(json, inputs) {
 module.exports = fromJSON
 fromJSON.default = fromJSON
 
-},{"./at-rule":37,"./comment":38,"./declaration":41,"./input":44,"./previous-map":52,"./root":55,"./rule":56}],44:[function(require,module,exports){
+},{"./at-rule":36,"./comment":37,"./declaration":40,"./input":43,"./previous-map":51,"./root":54,"./rule":55}],43:[function(require,module,exports){
 'use strict'
 
 let { SourceMapConsumer, SourceMapGenerator } = require('source-map-js')
@@ -8184,7 +8111,7 @@ if (terminalHighlight && terminalHighlight.registerInput) {
   terminalHighlight.registerInput(Input)
 }
 
-},{"./css-syntax-error":40,"./previous-map":52,"./terminal-highlight":3,"nanoid/non-secure":35,"path":3,"source-map-js":3,"url":3}],45:[function(require,module,exports){
+},{"./css-syntax-error":39,"./previous-map":51,"./terminal-highlight":3,"nanoid/non-secure":34,"path":3,"source-map-js":3,"url":3}],44:[function(require,module,exports){
 (function (process){(function (){
 'use strict'
 
@@ -8736,7 +8663,7 @@ Root.registerLazyResult(LazyResult)
 Document.registerLazyResult(LazyResult)
 
 }).call(this)}).call(this,require('_process'))
-},{"./container":39,"./document":42,"./map-generator":47,"./parse":49,"./result":54,"./root":55,"./stringify":58,"./symbols":59,"./warn-once":61,"_process":63}],46:[function(require,module,exports){
+},{"./container":38,"./document":41,"./map-generator":46,"./parse":48,"./result":53,"./root":54,"./stringify":57,"./symbols":58,"./warn-once":60,"_process":62}],45:[function(require,module,exports){
 'use strict'
 
 let list = {
@@ -8794,7 +8721,7 @@ let list = {
 module.exports = list
 list.default = list
 
-},{}],47:[function(require,module,exports){
+},{}],46:[function(require,module,exports){
 (function (Buffer){(function (){
 'use strict'
 
@@ -9098,7 +9025,7 @@ class MapGenerator {
 module.exports = MapGenerator
 
 }).call(this)}).call(this,require("buffer").Buffer)
-},{"buffer":4,"path":3,"source-map-js":3,"url":3}],48:[function(require,module,exports){
+},{"buffer":4,"path":3,"source-map-js":3,"url":3}],47:[function(require,module,exports){
 'use strict'
 
 let { isClean, my } = require('./symbols')
@@ -9420,7 +9347,7 @@ class Node {
 module.exports = Node
 Node.default = Node
 
-},{"./css-syntax-error":40,"./stringifier":57,"./stringify":58,"./symbols":59}],49:[function(require,module,exports){
+},{"./css-syntax-error":39,"./stringifier":56,"./stringify":57,"./symbols":58}],48:[function(require,module,exports){
 (function (process){(function (){
 'use strict'
 
@@ -9466,7 +9393,7 @@ parse.default = parse
 Container.registerParse(parse)
 
 }).call(this)}).call(this,require('_process'))
-},{"./container":39,"./input":44,"./parser":50,"_process":63}],50:[function(require,module,exports){
+},{"./container":38,"./input":43,"./parser":49,"_process":62}],49:[function(require,module,exports){
 'use strict'
 
 let Declaration = require('./declaration')
@@ -10033,7 +9960,7 @@ class Parser {
 
 module.exports = Parser
 
-},{"./at-rule":37,"./comment":38,"./declaration":41,"./root":55,"./rule":56,"./tokenize":60}],51:[function(require,module,exports){
+},{"./at-rule":36,"./comment":37,"./declaration":40,"./root":54,"./rule":55,"./tokenize":59}],50:[function(require,module,exports){
 (function (process){(function (){
 'use strict'
 
@@ -10132,7 +10059,7 @@ module.exports = postcss
 postcss.default = postcss
 
 }).call(this)}).call(this,require('_process'))
-},{"./at-rule":37,"./comment":38,"./container":39,"./css-syntax-error":40,"./declaration":41,"./document":42,"./fromJSON":43,"./input":44,"./lazy-result":45,"./list":46,"./node":48,"./parse":49,"./processor":53,"./result.js":54,"./root":55,"./rule":56,"./stringify":58,"./warning":62,"_process":63}],52:[function(require,module,exports){
+},{"./at-rule":36,"./comment":37,"./container":38,"./css-syntax-error":39,"./declaration":40,"./document":41,"./fromJSON":42,"./input":43,"./lazy-result":44,"./list":45,"./node":47,"./parse":48,"./processor":52,"./result.js":53,"./root":54,"./rule":55,"./stringify":57,"./warning":61,"_process":62}],51:[function(require,module,exports){
 (function (Buffer){(function (){
 'use strict'
 
@@ -10281,7 +10208,7 @@ module.exports = PreviousMap
 PreviousMap.default = PreviousMap
 
 }).call(this)}).call(this,require("buffer").Buffer)
-},{"buffer":4,"fs":3,"path":3,"source-map-js":3}],53:[function(require,module,exports){
+},{"buffer":4,"fs":3,"path":3,"source-map-js":3}],52:[function(require,module,exports){
 (function (process){(function (){
 'use strict'
 
@@ -10359,7 +10286,7 @@ Root.registerProcessor(Processor)
 Document.registerProcessor(Processor)
 
 }).call(this)}).call(this,require('_process'))
-},{"./document":42,"./lazy-result":45,"./root":55,"_process":63}],54:[function(require,module,exports){
+},{"./document":41,"./lazy-result":44,"./root":54,"_process":62}],53:[function(require,module,exports){
 'use strict'
 
 let Warning = require('./warning')
@@ -10403,7 +10330,7 @@ class Result {
 module.exports = Result
 Result.default = Result
 
-},{"./warning":62}],55:[function(require,module,exports){
+},{"./warning":61}],54:[function(require,module,exports){
 'use strict'
 
 let Container = require('./container')
@@ -10464,7 +10391,7 @@ Root.registerProcessor = dependant => {
 module.exports = Root
 Root.default = Root
 
-},{"./container":39}],56:[function(require,module,exports){
+},{"./container":38}],55:[function(require,module,exports){
 'use strict'
 
 let Container = require('./container')
@@ -10493,7 +10420,7 @@ Rule.default = Rule
 
 Container.registerRule(Rule)
 
-},{"./container":39,"./list":46}],57:[function(require,module,exports){
+},{"./container":38,"./list":45}],56:[function(require,module,exports){
 'use strict'
 
 const DEFAULT_RAW = {
@@ -10846,7 +10773,7 @@ class Stringifier {
 
 module.exports = Stringifier
 
-},{}],58:[function(require,module,exports){
+},{}],57:[function(require,module,exports){
 'use strict'
 
 let Stringifier = require('./stringifier')
@@ -10859,14 +10786,14 @@ function stringify(node, builder) {
 module.exports = stringify
 stringify.default = stringify
 
-},{"./stringifier":57}],59:[function(require,module,exports){
+},{"./stringifier":56}],58:[function(require,module,exports){
 'use strict'
 
 module.exports.isClean = Symbol('isClean')
 
 module.exports.my = Symbol('my')
 
-},{}],60:[function(require,module,exports){
+},{}],59:[function(require,module,exports){
 'use strict'
 
 const SINGLE_QUOTE = "'".charCodeAt(0)
@@ -11134,7 +11061,7 @@ module.exports = function tokenizer(input, options = {}) {
   }
 }
 
-},{}],61:[function(require,module,exports){
+},{}],60:[function(require,module,exports){
 'use strict'
 
 let printed = {}
@@ -11148,7 +11075,7 @@ module.exports = function warnOnce(message) {
   }
 }
 
-},{}],62:[function(require,module,exports){
+},{}],61:[function(require,module,exports){
 'use strict'
 
 class Warning {
@@ -11185,7 +11112,7 @@ class Warning {
 module.exports = Warning
 Warning.default = Warning
 
-},{}],63:[function(require,module,exports){
+},{}],62:[function(require,module,exports){
 // shim for using process in browser
 var process = module.exports = {};
 
@@ -11371,7 +11298,7 @@ process.chdir = function (dir) {
 };
 process.umask = function() { return 0; };
 
-},{}],64:[function(require,module,exports){
+},{}],63:[function(require,module,exports){
 /**
  * Copyright (c) 2014-present, Facebook, Inc.
  *

@@ -133,18 +133,15 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
 
       var escapeStringRegexp = require('escape-string-regexp');
 
-      var _require = require('klona'),
-          klona = _require.klona;
-
-      var _require2 = require('is-plain-object'),
-          isPlainObject = _require2.isPlainObject;
+      var _require = require('is-plain-object'),
+          isPlainObject = _require.isPlainObject;
 
       var deepmerge = require('deepmerge');
 
       var parseSrcset = require('parse-srcset');
 
-      var _require3 = require('postcss'),
-          postcssParse = _require3.parse; // Tags that can conceivably represent stand-alone media.
+      var _require2 = require('postcss'),
+          postcssParse = _require2.parse; // Tags that can conceivably represent stand-alone media.
 
 
       var mediaTags = ['img', 'audio', 'video', 'picture', 'svg', 'object', 'map', 'iframe', 'embed']; // Tags that are inherently vulnerable to being used in XSS attacks.
@@ -212,6 +209,10 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
       // https://github.com/fb55/htmlparser2/issues/105
 
       function sanitizeHtml(html, options, _recursing) {
+        if (html == null) {
+          return '';
+        }
+
         var result = ''; // Used for hot swapping the result variable with an empty string in order to "capture" the text written to it.
 
         var tempResult = '';
@@ -278,6 +279,7 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
 
         var allowedClassesMap = {};
         var allowedClassesGlobMap = {};
+        var allowedClassesRegexMap = {};
         each(options.allowedClasses, function (classes, tag) {
           // Implicitly allows the class attribute
           if (allowedAttributesMap) {
@@ -289,10 +291,13 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
           }
 
           allowedClassesMap[tag] = [];
+          allowedClassesRegexMap[tag] = [];
           var globRegex = [];
           classes.forEach(function (obj) {
             if (typeof obj === 'string' && obj.indexOf('*') >= 0) {
               globRegex.push(escapeStringRegexp(obj).replace(/\\\*/g, '.*'));
+            } else if (obj instanceof RegExp) {
+              allowedClassesRegexMap[tag].push(obj);
             } else {
               allowedClassesMap[tag].push(obj);
             }
@@ -594,8 +599,9 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
                     var allowedSpecificClasses = allowedClassesMap[name];
                     var allowedWildcardClasses = allowedClassesMap['*'];
                     var allowedSpecificClassesGlob = allowedClassesGlobMap[name];
+                    var allowedSpecificClassesRegex = allowedClassesRegexMap[name];
                     var allowedWildcardClassesGlob = allowedClassesGlobMap['*'];
-                    var allowedClassesGlobs = [allowedSpecificClassesGlob, allowedWildcardClassesGlob].filter(function (t) {
+                    var allowedClassesGlobs = [allowedSpecificClassesGlob, allowedWildcardClassesGlob].concat(allowedSpecificClassesRegex).filter(function (t) {
                       return t;
                     });
 
@@ -752,6 +758,8 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
               result = tempResult + escapeHtml(result);
               tempResult = '';
             }
+
+            addedText = false;
           }
         }, options.parser);
         parser.write(html);
@@ -831,11 +839,12 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
         }
         /**
          * Filters user input css properties by allowlisted regex attributes.
+         * Modifies the abstractSyntaxTree object.
          *
          * @param {object} abstractSyntaxTree  - Object representation of CSS attributes.
          * @property {array[Declaration]} abstractSyntaxTree.nodes[0] - Each object cointains prop and value key, i.e { prop: 'color', value: 'red' }.
          * @param {object} allowedStyles       - Keys are properties (i.e color), value is list of permitted regex rules (i.e /green/i).
-         * @return {object}                    - Abstract Syntax Tree with filtered style attributes.
+         * @return {object}                    - The modified tree.
          */
 
 
@@ -844,7 +853,6 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
             return abstractSyntaxTree;
           }
 
-          var filteredAST = klona(abstractSyntaxTree);
           var astRules = abstractSyntaxTree.nodes[0];
           var selectedRule; // Merge global and tag-specific styles into new AST.
 
@@ -855,23 +863,23 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
           }
 
           if (selectedRule) {
-            filteredAST.nodes[0].nodes = astRules.nodes.reduce(filterDeclarations(selectedRule), []);
+            abstractSyntaxTree.nodes[0].nodes = astRules.nodes.reduce(filterDeclarations(selectedRule), []);
           }
 
-          return filteredAST;
+          return abstractSyntaxTree;
         }
         /**
-         * Extracts the style attribues from an AbstractSyntaxTree and formats those
+         * Extracts the style attributes from an AbstractSyntaxTree and formats those
          * values in the inline style attribute format.
          *
          * @param  {AbstractSyntaxTree} filteredAST
-         * @return {string}             - Example: "color:yellow;text-align:center;font-family:helvetica;"
+         * @return {string}             - Example: "color:yellow;text-align:center !important;font-family:helvetica;"
          */
 
 
         function stringifyStyleAttributes(filteredAST) {
-          return filteredAST.nodes[0].nodes.reduce(function (extractedAttributes, attributeObject) {
-            extractedAttributes.push(attributeObject.prop + ':' + attributeObject.value);
+          return filteredAST.nodes[0].nodes.reduce(function (extractedAttributes, attrObject) {
+            extractedAttributes.push("".concat(attrObject.prop, ":").concat(attrObject.value).concat(attrObject.important ? ' !important' : ''));
             return extractedAttributes;
           }, []).join(';');
         }
@@ -938,10 +946,9 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
         disallowedTagsMode: 'discard',
         allowedAttributes: {
           a: ['href', 'name', 'target'],
-          // We don't currently allow img itself by default, but this
-          // would make sense if we did. You could add srcset here,
-          // and if you do the URL is checked for safety
-          img: ['src']
+          // We don't currently allow img itself by default, but
+          // these attributes would make sense if we did.
+          img: ['src', 'srcset', 'alt', 'title', 'width', 'height', 'loading']
         },
         // Lots of these won't come up by default because we don't allow them
         selfClosing: ['img', 'br', 'hr', 'area', 'base', 'basefont', 'input', 'link', 'meta'],
@@ -978,10 +985,9 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
       "escape-string-regexp": 27,
       "htmlparser2": 31,
       "is-plain-object": 33,
-      "klona": 34,
-      "parse-srcset": 36,
-      "postcss": 51,
-      "regenerator-runtime": 64
+      "parse-srcset": 35,
+      "postcss": 50,
+      "regenerator-runtime": 63
     }],
     2: [function (require, module, exports) {
       'use strict';
@@ -10445,97 +10451,6 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
       exports.isPlainObject = isPlainObject;
     }, {}],
     34: [function (require, module, exports) {
-      function klona(x) {
-        if (_typeof(x) !== 'object') return x;
-        var k,
-            tmp,
-            str = Object.prototype.toString.call(x);
-
-        if (str === '[object Object]') {
-          if (x.constructor !== Object && typeof x.constructor === 'function') {
-            tmp = new x.constructor();
-
-            for (k in x) {
-              if (tmp.hasOwnProperty(k) && tmp[k] !== x[k]) {
-                tmp[k] = klona(x[k]);
-              }
-            }
-          } else {
-            tmp = {}; // null
-
-            for (k in x) {
-              if (k === '__proto__') {
-                Object.defineProperty(tmp, k, {
-                  value: klona(x[k]),
-                  configurable: true,
-                  enumerable: true,
-                  writable: true
-                });
-              } else {
-                tmp[k] = klona(x[k]);
-              }
-            }
-          }
-
-          return tmp;
-        }
-
-        if (str === '[object Array]') {
-          k = x.length;
-
-          for (tmp = Array(k); k--;) {
-            tmp[k] = klona(x[k]);
-          }
-
-          return tmp;
-        }
-
-        if (str === '[object Set]') {
-          tmp = new Set();
-          x.forEach(function (val) {
-            tmp.add(klona(val));
-          });
-          return tmp;
-        }
-
-        if (str === '[object Map]') {
-          tmp = new Map();
-          x.forEach(function (val, key) {
-            tmp.set(klona(key), klona(val));
-          });
-          return tmp;
-        }
-
-        if (str === '[object Date]') {
-          return new Date(+x);
-        }
-
-        if (str === '[object RegExp]') {
-          tmp = new RegExp(x.source, x.flags);
-          tmp.lastIndex = x.lastIndex;
-          return tmp;
-        }
-
-        if (str === '[object DataView]') {
-          return new x.constructor(klona(x.buffer));
-        }
-
-        if (str === '[object ArrayBuffer]') {
-          return x.slice(0);
-        } // ArrayBuffer.isView(x)
-        // ~> `new` bcuz `Buffer.slice` => ref
-
-
-        if (str.slice(-6) === 'Array]') {
-          return new x.constructor(x);
-        }
-
-        return x;
-      }
-
-      exports.klona = klona;
-    }, {}],
-    35: [function (require, module, exports) {
       // This alphabet uses `A-Za-z0-9_-` symbols. The genetic algorithm helped
       // optimize the gzip compression for this alphabet.
       var urlAlphabet = 'ModuleSymbhasOwnPr-0123456789ABCDEFGHNRVfgctiUvz_KqYTJkLxpZXIjQW';
@@ -10574,7 +10489,7 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
         customAlphabet: customAlphabet
       };
     }, {}],
-    36: [function (require, module, exports) {
+    35: [function (require, module, exports) {
       /**
        * Srcset Parser
        *
@@ -10896,7 +10811,7 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
         };
       });
     }, {}],
-    37: [function (require, module, exports) {
+    36: [function (require, module, exports) {
       'use strict';
 
       var Container = require('./container');
@@ -10951,9 +10866,9 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
       AtRule["default"] = AtRule;
       Container.registerAtRule(AtRule);
     }, {
-      "./container": 39
+      "./container": 38
     }],
-    38: [function (require, module, exports) {
+    37: [function (require, module, exports) {
       'use strict';
 
       var Node = require('./node');
@@ -10979,14 +10894,14 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
       module.exports = Comment;
       Comment["default"] = Comment;
     }, {
-      "./node": 48
+      "./node": 47
     }],
-    39: [function (require, module, exports) {
+    38: [function (require, module, exports) {
       'use strict';
 
-      var _require4 = require('./symbols'),
-          isClean = _require4.isClean,
-          my = _require4.my;
+      var _require3 = require('./symbols'),
+          isClean = _require3.isClean,
+          my = _require3.my;
 
       var Declaration = require('./declaration');
 
@@ -11599,19 +11514,19 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
         }
       };
     }, {
-      "./comment": 38,
-      "./declaration": 41,
-      "./node": 48,
-      "./symbols": 59
+      "./comment": 37,
+      "./declaration": 40,
+      "./node": 47,
+      "./symbols": 58
     }],
-    40: [function (require, module, exports) {
+    39: [function (require, module, exports) {
       'use strict';
 
-      var _require5 = require('colorette'),
-          red = _require5.red,
-          bold = _require5.bold,
-          gray = _require5.gray,
-          colorette = _require5.options;
+      var _require4 = require('colorette'),
+          red = _require4.red,
+          bold = _require4.bold,
+          gray = _require4.gray,
+          colorette = _require4.options;
 
       var terminalHighlight = require('./terminal-highlight');
 
@@ -11734,7 +11649,7 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
       "./terminal-highlight": 3,
       "colorette": 3
     }],
-    41: [function (require, module, exports) {
+    40: [function (require, module, exports) {
       'use strict';
 
       var Node = require('./node');
@@ -11773,9 +11688,9 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
       module.exports = Declaration;
       Declaration["default"] = Declaration;
     }, {
-      "./node": 48
+      "./node": 47
     }],
-    42: [function (require, module, exports) {
+    41: [function (require, module, exports) {
       'use strict';
 
       var Container = require('./container');
@@ -11827,9 +11742,9 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
       module.exports = Document;
       Document["default"] = Document;
     }, {
-      "./container": 39
+      "./container": 38
     }],
-    43: [function (require, module, exports) {
+    42: [function (require, module, exports) {
       'use strict';
 
       var Declaration = require('./declaration');
@@ -11919,31 +11834,31 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
       module.exports = fromJSON;
       fromJSON["default"] = fromJSON;
     }, {
-      "./at-rule": 37,
-      "./comment": 38,
-      "./declaration": 41,
-      "./input": 44,
-      "./previous-map": 52,
-      "./root": 55,
-      "./rule": 56
+      "./at-rule": 36,
+      "./comment": 37,
+      "./declaration": 40,
+      "./input": 43,
+      "./previous-map": 51,
+      "./root": 54,
+      "./rule": 55
     }],
-    44: [function (require, module, exports) {
+    43: [function (require, module, exports) {
       'use strict';
 
-      var _require6 = require('source-map-js'),
-          SourceMapConsumer = _require6.SourceMapConsumer,
-          SourceMapGenerator = _require6.SourceMapGenerator;
+      var _require5 = require('source-map-js'),
+          SourceMapConsumer = _require5.SourceMapConsumer,
+          SourceMapGenerator = _require5.SourceMapGenerator;
 
-      var _require7 = require('url'),
-          fileURLToPath = _require7.fileURLToPath,
-          pathToFileURL = _require7.pathToFileURL;
+      var _require6 = require('url'),
+          fileURLToPath = _require6.fileURLToPath,
+          pathToFileURL = _require6.pathToFileURL;
 
-      var _require8 = require('path'),
-          resolve = _require8.resolve,
-          isAbsolute = _require8.isAbsolute;
+      var _require7 = require('path'),
+          resolve = _require7.resolve,
+          isAbsolute = _require7.isAbsolute;
 
-      var _require9 = require('nanoid/non-secure'),
-          nanoid = _require9.nanoid;
+      var _require8 = require('nanoid/non-secure'),
+          nanoid = _require8.nanoid;
 
       var terminalHighlight = require('./terminal-highlight');
 
@@ -12169,22 +12084,22 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
         terminalHighlight.registerInput(Input);
       }
     }, {
-      "./css-syntax-error": 40,
-      "./previous-map": 52,
+      "./css-syntax-error": 39,
+      "./previous-map": 51,
       "./terminal-highlight": 3,
-      "nanoid/non-secure": 35,
+      "nanoid/non-secure": 34,
       "path": 3,
       "source-map-js": 3,
       "url": 3
     }],
-    45: [function (require, module, exports) {
+    44: [function (require, module, exports) {
       (function (process) {
         (function () {
           'use strict';
 
-          var _require10 = require('./symbols'),
-              isClean = _require10.isClean,
-              my = _require10.my;
+          var _require9 = require('./symbols'),
+              isClean = _require9.isClean,
+              my = _require9.my;
 
           var MapGenerator = require('./map-generator');
 
@@ -12986,18 +12901,18 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
         }).call(this);
       }).call(this, require('_process'));
     }, {
-      "./container": 39,
-      "./document": 42,
-      "./map-generator": 47,
-      "./parse": 49,
-      "./result": 54,
-      "./root": 55,
-      "./stringify": 58,
-      "./symbols": 59,
-      "./warn-once": 61,
-      "_process": 63
+      "./container": 38,
+      "./document": 41,
+      "./map-generator": 46,
+      "./parse": 48,
+      "./result": 53,
+      "./root": 54,
+      "./stringify": 57,
+      "./symbols": 58,
+      "./warn-once": 60,
+      "_process": 62
     }],
-    46: [function (require, module, exports) {
+    45: [function (require, module, exports) {
       'use strict';
 
       var list = {
@@ -13062,23 +12977,23 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
       module.exports = list;
       list["default"] = list;
     }, {}],
-    47: [function (require, module, exports) {
+    46: [function (require, module, exports) {
       (function (Buffer) {
         (function () {
           'use strict';
 
-          var _require11 = require('source-map-js'),
-              SourceMapConsumer = _require11.SourceMapConsumer,
-              SourceMapGenerator = _require11.SourceMapGenerator;
+          var _require10 = require('source-map-js'),
+              SourceMapConsumer = _require10.SourceMapConsumer,
+              SourceMapGenerator = _require10.SourceMapGenerator;
 
-          var _require12 = require('path'),
-              dirname = _require12.dirname,
-              resolve = _require12.resolve,
-              relative = _require12.relative,
-              sep = _require12.sep;
+          var _require11 = require('path'),
+              dirname = _require11.dirname,
+              resolve = _require11.resolve,
+              relative = _require11.relative,
+              sep = _require11.sep;
 
-          var _require13 = require('url'),
-              pathToFileURL = _require13.pathToFileURL;
+          var _require12 = require('url'),
+              pathToFileURL = _require12.pathToFileURL;
 
           var sourceMapAvailable = Boolean(SourceMapConsumer && SourceMapGenerator);
           var pathAvailable = Boolean(dirname && resolve && relative && sep);
@@ -13452,12 +13367,12 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
       "source-map-js": 3,
       "url": 3
     }],
-    48: [function (require, module, exports) {
+    47: [function (require, module, exports) {
       'use strict';
 
-      var _require14 = require('./symbols'),
-          isClean = _require14.isClean,
-          my = _require14.my;
+      var _require13 = require('./symbols'),
+          isClean = _require13.isClean,
+          my = _require13.my;
 
       var CssSyntaxError = require('./css-syntax-error');
 
@@ -13862,12 +13777,12 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
       module.exports = Node;
       Node["default"] = Node;
     }, {
-      "./css-syntax-error": 40,
-      "./stringifier": 57,
-      "./stringify": 58,
-      "./symbols": 59
+      "./css-syntax-error": 39,
+      "./stringifier": 56,
+      "./stringify": 57,
+      "./symbols": 58
     }],
-    49: [function (require, module, exports) {
+    48: [function (require, module, exports) {
       (function (process) {
         (function () {
           'use strict';
@@ -13909,12 +13824,12 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
         }).call(this);
       }).call(this, require('_process'));
     }, {
-      "./container": 39,
-      "./input": 44,
-      "./parser": 50,
-      "_process": 63
+      "./container": 38,
+      "./input": 43,
+      "./parser": 49,
+      "_process": 62
     }],
-    50: [function (require, module, exports) {
+    49: [function (require, module, exports) {
       'use strict';
 
       var Declaration = require('./declaration');
@@ -14572,14 +14487,14 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
 
       module.exports = Parser;
     }, {
-      "./at-rule": 37,
-      "./comment": 38,
-      "./declaration": 41,
-      "./root": 55,
-      "./rule": 56,
-      "./tokenize": 60
+      "./at-rule": 36,
+      "./comment": 37,
+      "./declaration": 40,
+      "./root": 54,
+      "./rule": 55,
+      "./tokenize": 59
     }],
-    51: [function (require, module, exports) {
+    50: [function (require, module, exports) {
       (function (process) {
         (function () {
           'use strict';
@@ -14711,42 +14626,42 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
         }).call(this);
       }).call(this, require('_process'));
     }, {
-      "./at-rule": 37,
-      "./comment": 38,
-      "./container": 39,
-      "./css-syntax-error": 40,
-      "./declaration": 41,
-      "./document": 42,
-      "./fromJSON": 43,
-      "./input": 44,
-      "./lazy-result": 45,
-      "./list": 46,
-      "./node": 48,
-      "./parse": 49,
-      "./processor": 53,
-      "./result.js": 54,
-      "./root": 55,
-      "./rule": 56,
-      "./stringify": 58,
-      "./warning": 62,
-      "_process": 63
+      "./at-rule": 36,
+      "./comment": 37,
+      "./container": 38,
+      "./css-syntax-error": 39,
+      "./declaration": 40,
+      "./document": 41,
+      "./fromJSON": 42,
+      "./input": 43,
+      "./lazy-result": 44,
+      "./list": 45,
+      "./node": 47,
+      "./parse": 48,
+      "./processor": 52,
+      "./result.js": 53,
+      "./root": 54,
+      "./rule": 55,
+      "./stringify": 57,
+      "./warning": 61,
+      "_process": 62
     }],
-    52: [function (require, module, exports) {
+    51: [function (require, module, exports) {
       (function (Buffer) {
         (function () {
           'use strict';
 
-          var _require15 = require('source-map-js'),
-              SourceMapConsumer = _require15.SourceMapConsumer,
-              SourceMapGenerator = _require15.SourceMapGenerator;
+          var _require14 = require('source-map-js'),
+              SourceMapConsumer = _require14.SourceMapConsumer,
+              SourceMapGenerator = _require14.SourceMapGenerator;
 
-          var _require16 = require('fs'),
-              existsSync = _require16.existsSync,
-              readFileSync = _require16.readFileSync;
+          var _require15 = require('fs'),
+              existsSync = _require15.existsSync,
+              readFileSync = _require15.readFileSync;
 
-          var _require17 = require('path'),
-              dirname = _require17.dirname,
-              join = _require17.join;
+          var _require16 = require('path'),
+              dirname = _require16.dirname,
+              join = _require16.join;
 
           function fromBase64(str) {
             if (Buffer) {
@@ -14902,7 +14817,7 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
       "path": 3,
       "source-map-js": 3
     }],
-    53: [function (require, module, exports) {
+    52: [function (require, module, exports) {
       (function (_process) {
         (function () {
           'use strict';
@@ -14996,12 +14911,12 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
         }).call(this);
       }).call(this, require('_process'));
     }, {
-      "./document": 42,
-      "./lazy-result": 45,
-      "./root": 55,
-      "_process": 63
+      "./document": 41,
+      "./lazy-result": 44,
+      "./root": 54,
+      "_process": 62
     }],
-    54: [function (require, module, exports) {
+    53: [function (require, module, exports) {
       'use strict';
 
       var Warning = require('./warning');
@@ -15058,9 +14973,9 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
       module.exports = Result;
       Result["default"] = Result;
     }, {
-      "./warning": 62
+      "./warning": 61
     }],
-    55: [function (require, module, exports) {
+    54: [function (require, module, exports) {
       'use strict';
 
       var Container = require('./container');
@@ -15148,9 +15063,9 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
       module.exports = Root;
       Root["default"] = Root;
     }, {
-      "./container": 39
+      "./container": 38
     }],
-    56: [function (require, module, exports) {
+    55: [function (require, module, exports) {
       'use strict';
 
       var Container = require('./container');
@@ -15192,10 +15107,10 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
       Rule["default"] = Rule;
       Container.registerRule(Rule);
     }, {
-      "./container": 39,
-      "./list": 46
+      "./container": 38,
+      "./list": 45
     }],
-    57: [function (require, module, exports) {
+    56: [function (require, module, exports) {
       'use strict';
 
       var DEFAULT_RAW = {
@@ -15592,7 +15507,7 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
 
       module.exports = Stringifier;
     }, {}],
-    58: [function (require, module, exports) {
+    57: [function (require, module, exports) {
       'use strict';
 
       var Stringifier = require('./stringifier');
@@ -15605,15 +15520,15 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
       module.exports = stringify;
       stringify["default"] = stringify;
     }, {
-      "./stringifier": 57
+      "./stringifier": 56
     }],
-    59: [function (require, module, exports) {
+    58: [function (require, module, exports) {
       'use strict';
 
       module.exports.isClean = Symbol('isClean');
       module.exports.my = Symbol('my');
     }, {}],
-    60: [function (require, module, exports) {
+    59: [function (require, module, exports) {
       'use strict';
 
       var SINGLE_QUOTE = "'".charCodeAt(0);
@@ -15876,7 +15791,7 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
         };
       };
     }, {}],
-    61: [function (require, module, exports) {
+    60: [function (require, module, exports) {
       'use strict';
 
       var printed = {};
@@ -15890,7 +15805,7 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
         }
       };
     }, {}],
-    62: [function (require, module, exports) {
+    61: [function (require, module, exports) {
       'use strict';
 
       var Warning = /*#__PURE__*/function () {
@@ -15938,7 +15853,7 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
       module.exports = Warning;
       Warning["default"] = Warning;
     }, {}],
-    63: [function (require, module, exports) {
+    62: [function (require, module, exports) {
       // shim for using process in browser
       var process = module.exports = {}; // cached from whatever global is present so that test runners that stub it
       // don't break things.  But we need to wrap it in a try catch in case it is
@@ -16148,7 +16063,7 @@ function _typeof(obj) { "@babel/helpers - typeof"; if (typeof Symbol === "functi
         return 0;
       };
     }, {}],
-    64: [function (require, module, exports) {
+    63: [function (require, module, exports) {
       /**
        * Copyright (c) 2014-present, Facebook, Inc.
        *
